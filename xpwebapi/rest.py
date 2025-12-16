@@ -1,5 +1,4 @@
-"""X-Plane Web API access through REST API
-"""
+"""X-Plane Web API access through REST API"""
 
 import logging
 import base64
@@ -141,6 +140,7 @@ class XPRestAPI(API):
         try:
             # Relies on the fact that first version is always provided.
             # Later verion offer alternative ot detect API
+            self.inc("get")
             response = self.session.get(CHECK_API_URL)
             webapi_logger.info(f"GET {CHECK_API_URL}: {response}")
             if response.status_code == 200:
@@ -176,6 +176,7 @@ class XPRestAPI(API):
         if self.connected:
             try:
                 CAPABILITIES_API_URL = f"http://{self.host}:{self.port}/api/capabilities"  # independent from version
+                self.inc("get")
                 response = self.session.get(CAPABILITIES_API_URL)
                 webapi_logger.info(f"GET {CAPABILITIES_API_URL}: {response}")
                 if response.status_code == 200:  # We have version 12.1.4 or above
@@ -184,6 +185,7 @@ class XPRestAPI(API):
                     return self._capabilities
                 logger.info(f"capabilities at {self.rest_url + '/capabilities'}: response={response.status_code}")
                 url = self.rest_url + "/v1/datarefs/count"
+                self.inc("get")
                 response = self.session.get(url)
                 webapi_logger.info(f"GET {url}: {response}")
                 if response.status_code == 200:  # OK, /api/v1 exists, we use it, we have version 12.1.1 or above
@@ -331,6 +333,7 @@ class XPRestAPI(API):
         payload = f"filter[name]={obj.path}"
         obj_type = "/datarefs" if isinstance(obj, Dataref) else "/commands"
         url = self.rest_url + obj_type
+        self.inc("get")
         response = self.session.get(url, params=payload)
         webapi_logger.info(f"GET {obj.path}: {url} = {response}")
         if response.status_code == 200:
@@ -387,6 +390,7 @@ class XPRestAPI(API):
             # Update just one element of the array
             url = url + f"?index={dataref.index}"
         webapi_logger.info(f"PATCH {dataref.path}: {url}, {payload}")
+        self.inc("patch")
         response = self.session.patch(url, json=payload)
         if response.status_code == 200:
             data = response.json()
@@ -413,6 +417,7 @@ class XPRestAPI(API):
             duration = command.duration
         payload = {REST_KW.IDENT.value: command.ident, REST_KW.DURATION.value: duration}
         url = f"{self.rest_url}/command/{command.ident}/activate"
+        self.inc("post")
         response = self.session.post(url, json=payload)
         webapi_logger.info(f"POST {command.path}: {url} {payload} {response}")
         data = response.json()
@@ -435,6 +440,7 @@ class XPRestAPI(API):
             logger.error(f"dataref {dataref.path} not valid")
             return None
         url = f"{self.rest_url}/datarefs/{dataref.ident}/value"
+        self.inc("get")
         response = self.session.get(url)
         if response.status_code == 200:
             respjson = response.json()
@@ -458,6 +464,7 @@ class XPRestAPI(API):
         url = f"{self.rest_url}/datarefs/filter[name]={dataref.path}"
         if fields != "all":
             url = url + f"&fields=[{','.join(fields)}]"
+        self.inc("get")
         response = self.session.get(url)
         if response.status_code == 200:
             respjson = response.json()
@@ -488,6 +495,7 @@ class XPRestAPI(API):
         if limit is not None:
             payload = payload + f"&limit={limit}"
         url = f"{self.rest_url}/datarefs"
+        self.inc("get")
         response = self.session.get(url, params=payload)
         if response.status_code == 200:
             respjson = response.json()
@@ -516,6 +524,7 @@ class XPRestAPI(API):
         if limit is not None:
             payload = payload + f"&limit={limit}"
         url = f"{self.rest_url}/commands"
+        self.inc("get")
         response = self.session.get(url, params=payload)
         if response.status_code == 200:
             respjson = response.json()

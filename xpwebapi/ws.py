@@ -1,5 +1,4 @@
-"""X-Plane Web API access through Websocket API
-"""
+"""X-Plane Web API access through Websocket API"""
 
 from __future__ import annotations
 
@@ -30,7 +29,7 @@ logger = logging.getLogger(__name__)
 XP_MIN_VERSION = 121400
 XP_MIN_VERSION_STR = "12.1.4"
 XP_MAX_VERSION = 121499
-XP_MAX_VERSION_STR = "12.2.1"
+XP_MAX_VERSION_STR = "12.3.3"
 
 MAX_WARNING_COUNT = 5
 
@@ -110,6 +109,14 @@ class XPWebsocketAPI(XPRestAPI):
         self.req_number = 0
         self._requests = {}
 
+        # Basic WebSocket stats
+        # Basic REST stats
+        self._stats = self._stats | {
+            "request": 0,
+            "message": 0,
+            "update": 0,
+        }
+
         self.slow_stop = threading.Event()
         self.should_not_connect = threading.Event()
         self.should_not_connect.set()  # starts off
@@ -157,12 +164,14 @@ class XPWebsocketAPI(XPRestAPI):
         bool: Whether error reported during execution
 
         """
+        self.inc("callback")
         cbs = self.callbacks[cbtype.value]
         if len(cbs) == 0:
             return True
         ret = True
         for callback in cbs:
             try:
+                self.inc("callback_" + cbtype.value)
                 callback(**kwargs)
             except:
                 logger.error(f"callback {callback}", exc_info=True)
@@ -369,6 +378,7 @@ class XPWebsocketAPI(XPRestAPI):
                 logger.debug("..connection monitor not running..disconnected")
             else:
                 logger.debug("..not connected")
+        logger.info(f"disconnected.\nXP Web API Statistics: {self._stats}")
 
     # ################################
     # I/O
@@ -394,6 +404,7 @@ class XPWebsocketAPI(XPRestAPI):
         req_id = self.next_req
         payload[REST_KW.REQID.value] = req_id
         self._requests[req_id] = Request(r_id=req_id, body=payload, ts=now())
+        self.inc("send")
         self.ws.send(json.dumps(payload))
         webapi_logger.info(f">>SENT {payload}")
         if len(mapping) > 0:
@@ -635,6 +646,7 @@ class XPWebsocketAPI(XPRestAPI):
         while self.websocket_listener_running:
             try:
                 message = self.ws.receive(timeout=self.RECEIVE_TIMEOUT)
+                self.inc("receive_raw")
                 # probably we don't receive messages because X-Plane has nothing to send...
                 if message is None:
                     if to_count % TO_COUNT_INFO == 0:
@@ -644,6 +656,7 @@ class XPWebsocketAPI(XPRestAPI):
                     to_count = to_count + 1
                     continue
 
+                self.inc("receive")
                 lnow = now()
                 if total_reads == 0:
                     logger.info(f"..first message at {lnow.replace(microsecond=0)} ({round((lnow - start_time).seconds, 2)} secs.).. {'<'*attention}")
@@ -668,6 +681,7 @@ class XPWebsocketAPI(XPRestAPI):
                     #
                     if resp_type == WS_RESPONSE_TYPE.RESULT.value:
 
+                        self.inc("response_result")
                         webapi_logger.info(f"<<RCV  {data}")
                         req_id = data.get(REST_KW.REQID.value)
                         if req_id is not None:
@@ -681,6 +695,7 @@ class XPWebsocketAPI(XPRestAPI):
                     #
                     elif resp_type == WS_RESPONSE_TYPE.COMMAND_ACTIVE.value:
 
+                        self.inc("response_command")
                         if REST_KW.DATA.value not in data:
                             logger.warning(f"no data: {data}")
                             continue
@@ -696,6 +711,7 @@ class XPWebsocketAPI(XPRestAPI):
                     #
                     elif resp_type == WS_RESPONSE_TYPE.DATAREF_UPDATE.value:
 
+                        self.inc("response_update")
                         if REST_KW.DATA.value not in data:
                             logger.warning(f"no data: {data}")
                             continue
@@ -709,6 +725,7 @@ class XPWebsocketAPI(XPRestAPI):
                                 )
                                 continue
 
+                            self.inc("update_dataref")
                             if type(dataref) is list:
                                 #
                                 # 1. One or more values from a dataref array (but not all values)
@@ -737,7 +754,11 @@ class XPWebsocketAPI(XPRestAPI):
                                         current_indices = last_indices
                                 for idx, v1 in zip(current_indices, value):
                                     d1 = f"{meta.name}[{idx}]"
-                                    self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=d1, value=v1)
+                                    if self.changed(d1, v1):
+                                        self.inc(d1)
+                                        self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=d1, value=v1)
+                                    else:
+                                        self.inc("-"+d1)
                                     # print(f"{d1}={v1}")
                                 # alternative:
                                 # for d in dataref:
@@ -747,7 +768,11 @@ class XPWebsocketAPI(XPRestAPI):
                                 #
                                 # 2. Scalar value
                                 parsed_value = dataref.parse_raw_value(value)
-                                self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=dataref.path, value=parsed_value)
+                                if self.changed(dataref.path, parsed_value):
+                                    self.inc(dataref.path)
+                                    self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=dataref.path, value=parsed_value)
+                                else:
+                                    self.inc("-"+dataref.path)
                                 # print(f"{dataref.name}={parsed_value}")
                     #
                     #

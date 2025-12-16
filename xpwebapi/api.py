@@ -1,15 +1,15 @@
-"""Abstract base classes and core classes like Dataref and Command.
-"""
+"""Abstract base classes and core classes like Dataref and Command."""
 
 from __future__ import annotations
 
 import logging
 import json
 import base64
+import math
 from abc import ABC, abstractmethod
 from enum import Enum, IntEnum
 from datetime import datetime
-from typing import List
+from typing import List, Dict, Tuple, Any
 
 type DatarefValueType = bool | str | int | float
 
@@ -146,6 +146,41 @@ class CommandMeta(APIObjMeta):
         self.description = description
 
 
+class ValueCache:
+    """Utility class to round a dataref value and determine if it has changed."""
+
+    def __init__(self, roundings: Dict[str, int]) -> None:
+        self.roundings = roundings  # {dataref: int()}
+        self._last_value = {}  # {dataref: Any}
+
+    def get_rounding(self, dataref: str) -> float | None:
+        # 1. plain path: sim/some/values[4]
+        rnd = self.roundings.get(dataref)
+        if rnd is not None:
+            return rnd
+        # 2. for arrays, all element can use same rounding
+        if "[" in dataref:
+            root_name = dataref[: dataref.find("[")]  # sim/some/values
+            rnd = self.roundings.get(root_name)
+            if rnd is not None:
+                return rnd
+            root_name = root_name + "[*]"  # sim/some/values[*]
+            rnd = self.roundings.get(root_name)
+            if rnd is not None:
+                return rnd
+        return None
+
+    def changed(self, dataref: str, value: Any) -> bool:
+        if type(value) in [int, float]:
+            rnd = self.get_rounding(dataref)
+            if rnd is not None:
+                new_value = round(value, rnd)
+                if new_value == self._last_value.get(dataref, math.inf):
+                    return False
+                self._last_value[dataref] = new_value
+        return True
+
+
 # #############################################
 # API
 #
@@ -163,6 +198,10 @@ class API(ABC):
         self.status = CONNECTION_STATUS.NOT_CONNECTED
 
         self._use_cache = False  # actual use of cache
+        self._roundings = None
+
+        self._show_stats = True
+        self._stats = {}
 
         self.set_network(host=host, port=port, api=api, api_version=api_version)
 
@@ -197,6 +236,24 @@ class API(ABC):
     def connected(self) -> bool:
         """Whether X-Plane API is reachable through this instance"""
         return False
+
+    def set_roundings(self, roundings):
+        """Add rounding to simulator variable value.
+        Rounding is applied to value before it is sent to callback function.
+        """
+        self._roundings = ValueCache(roundings=roundings)
+        logger.info(f"API dataref value rounding set ({len(self._roundings.roundings)})")
+
+    def changed(self, dataref, value) -> bool:
+        """If rounding applies, determine if value has changed according to its rounding."""
+        return True if self._roundings is None else self._roundings.changed(dataref, value)
+
+    def inc(self, name, count: int = 1):
+        if name not in self._stats:
+            self._stats[name] = 0
+        self._stats[name] = self._stats[name] + count
+        if self._show_stats and (self._stats[name] % 500 == 0 or ("/" in name and self._stats[name] % 100 == 0)):
+            logger.info(f"*** web api stats: {name}: {self._stats[name]}")
 
     def set_network(self, host: str, port: int, api: str, api_version: str) -> bool:
         """Set network and API parameters for connection
