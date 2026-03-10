@@ -707,6 +707,9 @@ class Dataref:
                 return None
 
             if len(self.meta.indices) == 0:
+                if len(raw_value) == 1:
+                    logger.debug(f"dataref array {self.name}: no index but length 1, returning scalar")
+                    return raw_value[0]
                 logger.debug(f"dataref array {self.name}: no index, returning whole array")
                 return raw_value
 

@@ -124,6 +124,8 @@ class XPWebsocketAPI(XPRestAPI):
         self._already_warned = 0
         self._stats = {}
 
+        self._requested_indices_by_id = {}
+
         self.callbacks = {t.value: set() for t in CALLBACK_TYPE}
         # Add a default
         self.set_callback(CALLBACK_TYPE.ON_REQUEST_FEEDBACK, self._on_request_feedback)
@@ -456,24 +458,27 @@ class XPWebsocketAPI(XPRestAPI):
         for dataref in datarefs.values():
             if type(dataref) is list:
                 meta = self.get_dataref_meta_by_id(dataref[0].ident)  # we modify the global source info, not the local copy in the Dataref()
-                if meta is None:
-                    logger.warning(f"cannot register {dataref[0]}, no meta data")
-                    continue
-                webapi_logger.info(f"INDICES bef: {dataref[0].ident} => {meta.indices}")
-                meta.save_indices()  # indices of "current" requests
+                
                 ilist = []
                 otext = "on "
+                
+                if dataref[0].ident not in self._requested_indices_by_id:
+                    self._requested_indices_by_id[dataref[0].ident] = []
+                    
                 for d1 in dataref:
                     ilist.append(d1.index)
                     if on:
-                        meta.append_index(d1.index)
+                        if d1.index not in self._requested_indices_by_id[dataref[0].ident]:
+                            self._requested_indices_by_id[dataref[0].ident].append(d1.index)
+                            self._requested_indices_by_id[dataref[0].ident].sort()
                     else:
                         otext = "off"
-                        meta.remove_index(d1.index)
-                    meta._last_req_number = self.req_number  # not 100% correct, but sufficient
+                        if d1.index in self._requested_indices_by_id[dataref[0].ident]:
+                            self._requested_indices_by_id[dataref[0].ident].remove(d1.index)
+
                 drefs.append({REST_KW.IDENT.value: dataref[0].ident, REST_KW.INDEX.value: ilist})
                 webapi_logger.info(f"INDICES {otext}: {dataref[0].ident} => {ilist}")
-                webapi_logger.info(f"INDICES aft: {dataref[0].ident} => {meta.indices}")
+                webapi_logger.info(f"INDICES aft: {dataref[0].ident} => {self._requested_indices_by_id[dataref[0].ident]}")
             else:
                 if dataref.is_array:
                     logger.debug(f"dataref {dataref.name}: collecting whole array")
@@ -736,22 +741,14 @@ class XPWebsocketAPI(XPRestAPI):
                                 if meta is None:
                                     logger.warning(f"dataref array {self.all_datarefs.equiv(ident=ident)} meta data not found")
                                     continue
-                                current_indices = meta.indices
+                                current_indices = self._requested_indices_by_id.get(ident, [])
                                 if len(value) != len(current_indices):
                                     logger.warning(
                                         f"dataref array {self.all_datarefs.equiv(ident=ident)}: size mismatch ({len(value)} vs {len(current_indices)})"
                                     )
                                     logger.warning(f"dataref array {self.all_datarefs.equiv(ident=ident)}: value: {value}, indices: {current_indices})")
-                                    # So! since we totally missed this set of data, we ask for the set again to refresh the data:
-                                    # err = self.send({REST_KW.TYPE.value: "dataref_subscribe_values", REST_KW.PARAMS.value: {REST_KW.DATAREFS.value: meta.indices}}, {})
-                                    last_indices = meta.last_indices()
-                                    if len(value) != len(last_indices):
-                                        logger.warning("no attempt with previously requested indices, no match")
-                                        continue
-                                    else:
-                                        logger.warning("attempt with previously requested indices (we have a match)..")
-                                        logger.warning(f"dataref array: current value: {value}, previous indices: {last_indices})")
-                                        current_indices = last_indices
+                                    # Since we don't know the indices for this partial data array, we skip processing to avoid misrouting
+                                    continue
                                 for idx, v1 in zip(current_indices, value):
                                     d1 = f"{meta.name}[{idx}]"
                                     if self.changed(d1, v1):
@@ -913,7 +910,16 @@ class XPWebsocketAPI(XPRestAPI):
         ret = 0
         if len(bulk) > 0:
             ret = self.register_bulk_dataref_value_event(datarefs=bulk, on=True)
-            self._dataref_by_id = self._dataref_by_id | bulk
+            for i, d in bulk.items():
+                if i in self._dataref_by_id:
+                    if type(d) is list and type(self._dataref_by_id[i]) is list:
+                        for d1 in d:
+                            if d1 not in self._dataref_by_id[i]:
+                                self._dataref_by_id[i].append(d1)
+                    else:
+                        self._dataref_by_id[i] = d
+                else:
+                    self._dataref_by_id[i] = d
             dlist = []
             for d in bulk.values():
                 if type(d) is list:
@@ -966,12 +972,25 @@ class XPWebsocketAPI(XPRestAPI):
 
         ret = 0
         if len(bulk) > 0:
-            ret = self.register_bulk_dataref_value_event(datarefs=bulk, on=False)
-            for i in bulk.keys():
+            to_unsubscribe = {}
+            for i, d in bulk.items():
                 if i in self._dataref_by_id:
-                    del self._dataref_by_id[i]
+                    if type(d) is list and type(self._dataref_by_id[i]) is list:
+                        for d1 in d:
+                            if d1 in self._dataref_by_id[i]:
+                                self._dataref_by_id[i].remove(d1)
+                        if len(self._dataref_by_id[i]) == 0:
+                            del self._dataref_by_id[i]
+                            to_unsubscribe[i] = d
+                    else:
+                        del self._dataref_by_id[i]
+                        to_unsubscribe[i] = d
                 else:
                     logger.warning(f"no dataref for id={self.all_datarefs.equiv(ident=i)}")
+            
+            if len(to_unsubscribe) > 0:
+                ret = self.register_bulk_dataref_value_event(datarefs=to_unsubscribe, on=False)
+
             dlist = []
             for d in bulk.values():
                 if type(d) is list:
