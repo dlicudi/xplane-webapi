@@ -412,7 +412,11 @@ class Cache:
             return None
         self._what = path
         url = self.api.rest_url + path
-        response = self.api.session.get(url)
+        try:
+            response = self.api.session.get(url)
+        except Exception as exc:
+            logger.warning(f"load {path}: request failed ({exc.__class__.__name__})")
+            return None
         webapi_logger.info(f"GET {path}: {url} = {response}")
         if response.status_code != 200:  # We have version 12.1.4 or above
             logger.error(f"load: response={response.status_code}")

@@ -260,7 +260,13 @@ class XPWebsocketAPI(XPRestAPI):
         try:
             # When restarted after network failure, clean and rebuild cached metadata
             # before notifying higher layers that startup is complete.
-            self.reload_caches()
+            for attempt in range(3):
+                self.reload_caches(force=True)
+                if self.all_datarefs is not None and self.all_datarefs.count > 0:
+                    break
+                if attempt < 2:
+                    logger.warning("startup metadata warm-up incomplete, retrying..")
+                    time.sleep(0.5)
             self.rebuild_dataref_ids()
             self.execute_callbacks(CALLBACK_TYPE.AFTER_START, connected=self.connected)
             logger.info(f"{type(self).__name__} started")
