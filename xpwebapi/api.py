@@ -502,6 +502,9 @@ class Dataref:
                 r = self.api.all_datarefs.get(self.path)
                 if r is not None:
                     return r
+                if self.path == "sim/aircraft/view/acf_livery_path":
+                    logger.debug(f"dataref {self.path} metadata not ready yet")
+                    return None
                 logger.error(f"dataref {self.path} has no api meta data in cache")
             else:
                 logger.error("no cache data")

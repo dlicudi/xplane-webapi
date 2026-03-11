@@ -105,6 +105,7 @@ class XPWebsocketAPI(XPRestAPI):
         self.ws_lsnr_not_running = threading.Event()
         self.ws_lsnr_not_running.set()  # means it is off
         self.ws_thread = None
+        self.startup_thread = None
 
         self.req_number = 0
         self._requests = {}
@@ -239,7 +240,6 @@ class XPWebsocketAPI(XPRestAPI):
                     if self.rest_api_reachable:
                         self.ws = Client.connect(url)
                         self.status = CONNECTION_STATUS.WEBSOCKET_CONNNECTED
-                        self.reload_caches()
                         logger.info(f"websocket opened at {url}")
                         self.execute_callbacks(CALLBACK_TYPE.ON_OPEN)
                     else:
@@ -255,6 +255,19 @@ class XPWebsocketAPI(XPRestAPI):
                 logger.warning(f"web socket url is none {url}")
         else:
             logger.warning("already connected")
+
+    def _complete_startup(self):
+        try:
+            # When restarted after network failure, clean and rebuild cached metadata
+            # before notifying higher layers that startup is complete.
+            self.reload_caches()
+            self.rebuild_dataref_ids()
+            self.execute_callbacks(CALLBACK_TYPE.AFTER_START, connected=self.connected)
+            logger.info(f"{type(self).__name__} started")
+        except:
+            logger.error("startup finalization failed", exc_info=True)
+        finally:
+            self.startup_thread = None
 
     def disconnect_websocket(self, silent: bool = False):
         """Gracefully closes Websocket connection"""
@@ -816,12 +829,12 @@ class XPWebsocketAPI(XPRestAPI):
         else:
             logger.info("websocket listener already running.")
 
-        # When restarted after network failure, should clean all datarefs
-        # then reload datarefs from current page of each deck
-        self.reload_caches()
-        self.rebuild_dataref_ids()
-        self.execute_callbacks(CALLBACK_TYPE.AFTER_START, connected=self.connected)
-        logger.info(f"{type(self).__name__} started")
+        if self.startup_thread is None or not self.startup_thread.is_alive():
+            self.startup_thread = threading.Thread(target=self._complete_startup, name=f"{type(self).__name__}::Startup")
+            self.startup_thread.start()
+        else:
+            logger.info("startup finalization already running")
+
         if not release:
             logger.info("waiting for termination..")
             for t in threading.enumerate():
