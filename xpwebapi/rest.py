@@ -163,7 +163,7 @@ class XPRestAPI(API):
         if d:
             res = res + f"loaded {self.all_datarefs.count} datarefs metadata"
         c = self.all_commands is not None and self.all_commands.has_data
-        if d:
+        if c:
             res = res + f", loaded {self.all_commands.count} commands metadata"
         logger.debug(res)
         return d and c
@@ -420,12 +420,12 @@ class XPRestAPI(API):
         self.inc("post")
         response = self.session.post(url, json=payload)
         webapi_logger.info(f"POST {command.path}: {url} {payload} {response}")
-        data = response.json()
         if response.status_code == 200:
+            data = response.json()
             logger.debug(f"result: {data}")
             return True
         webapi_logger.info(f"ERROR {command.path}: {response} {response.reason} {response.text}")
-        logger.error(f"rest_execute: {response}, {data}")
+        logger.error(f"rest_execute: {response}")
         return False
 
     def dataref_value(self, dataref: Dataref, raw: bool = False, no_decode: bool = False) -> DatarefValueType | None:
@@ -560,7 +560,7 @@ class XPRestAPI(API):
             new_apiversion = "/v1"
             if xp_version >= XP_MIN_VERSION:
                 new_apiversion = "/v2"
-            elif xp_version < XP_SUPER_MIN_VERSION:
+            elif xp_version < XP_MIN_VERSION:
                 new_apiversion = ""
                 logger.warning(f"could not set API version from {xp_version} ({beacon_data})")
             if new_apiversion != "" and (new_apiversion != self._api_version or new_host != self.host or new_port != self.port):
