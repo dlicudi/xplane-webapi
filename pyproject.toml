@@ -60,6 +60,8 @@ Source = "https://github.com/devleaks/xplane-webapi"
 #
 [tool.ruff]
 line-length = 160
+
+[tool.ruff.lint]
 select = [
     "E",
     "F",
