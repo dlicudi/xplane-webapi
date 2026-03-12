@@ -252,7 +252,7 @@ class API(ABC):
         if name not in self._stats:
             self._stats[name] = 0
         self._stats[name] = self._stats[name] + count
-        if self._show_stats and (self._stats[name] % 500 == 0 or ("/" in name and self._stats[name] % 100 == 0)):
+        if self._show_stats and (self._stats[name] % 5000 == 0 or ("/" in name and self._stats[name] % 1000 == 0)):
             logger.info(f"*** web api stats: {name}: {self._stats[name]}")
 
     def set_network(self, host: str, port: int, api: str, api_version: str) -> bool:
