@@ -391,7 +391,11 @@ class XPRestAPI(API):
             url = url + f"?index={dataref.index}"
         webapi_logger.info(f"PATCH {dataref.path}: {url}, {payload}")
         self.inc("patch")
-        response = self.session.patch(url, json=payload)
+        try:
+            response = self.session.patch(url, json=payload)
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"rest_write: connection lost writing {dataref.path}")
+            return False
         if response.status_code == 200:
             data = response.json()
             logger.debug(f"result: {data}")
@@ -418,7 +422,11 @@ class XPRestAPI(API):
         payload = {REST_KW.IDENT.value: command.ident, REST_KW.DURATION.value: duration}
         url = f"{self.rest_url}/command/{command.ident}/activate"
         self.inc("post")
-        response = self.session.post(url, json=payload)
+        try:
+            response = self.session.post(url, json=payload)
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"execute_command: connection lost executing {command.path}")
+            return False
         webapi_logger.info(f"POST {command.path}: {url} {payload} {response}")
         if response.status_code == 200:
             data = response.json()
@@ -441,7 +449,11 @@ class XPRestAPI(API):
             return None
         url = f"{self.rest_url}/datarefs/{dataref.ident}/value"
         self.inc("get")
-        response = self.session.get(url)
+        try:
+            response = self.session.get(url)
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"dataref_value: connection lost fetching {dataref.path}")
+            return None
         if response.status_code == 200:
             respjson = response.json()
             webapi_logger.info(f"GET {dataref.path}: {url} = {respjson}")
@@ -465,7 +477,11 @@ class XPRestAPI(API):
         if fields != "all":
             url = url + f"&fields=[{','.join(fields)}]"
         self.inc("get")
-        response = self.session.get(url)
+        try:
+            response = self.session.get(url)
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"dataref_meta: connection lost fetching {dataref.path}")
+            return None
         if response.status_code == 200:
             respjson = response.json()
             webapi_logger.info(f"GET {dataref.path}: {url} = {respjson}")
@@ -477,7 +493,7 @@ class XPRestAPI(API):
                 logger.warning(f"dataref meta invalid {data}", exc_info=True)
             return None
         webapi_logger.info(f"ERROR {dataref.path}: {response} {response.reason} {response.text}")
-        logger.error(f"dataref_value: {response} {response.reason} {response.text}")
+        logger.error(f"dataref_meta: {response} {response.reason} {response.text}")
         return None
 
     # Meta data collection for one or more datarefs or commands
@@ -496,7 +512,11 @@ class XPRestAPI(API):
             payload = payload + f"&limit={limit}"
         url = f"{self.rest_url}/datarefs"
         self.inc("get")
-        response = self.session.get(url, params=payload)
+        try:
+            response = self.session.get(url, params=payload)
+        except requests.exceptions.ConnectionError:
+            logger.warning("datarefs_meta: connection lost")
+            return []
         if response.status_code == 200:
             respjson = response.json()
             webapi_logger.info(f"GET {payload}: {url} = {respjson}")
@@ -525,7 +545,11 @@ class XPRestAPI(API):
             payload = payload + f"&limit={limit}"
         url = f"{self.rest_url}/commands"
         self.inc("get")
-        response = self.session.get(url, params=payload)
+        try:
+            response = self.session.get(url, params=payload)
+        except requests.exceptions.ConnectionError:
+            logger.warning("commands_meta: connection lost")
+            return []
         if response.status_code == 200:
             respjson = response.json()
             webapi_logger.info(f"GET {payload}: {url} = {respjson}")
