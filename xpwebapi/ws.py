@@ -495,6 +495,7 @@ class XPWebsocketAPI(XPRestAPI):
                         if d1.index in self._requested_indices_by_id[dataref[0].ident]:
                             self._requested_indices_by_id[dataref[0].ident].remove(d1.index)
 
+                ilist.sort()  # must match _requested_indices_by_id order so compressed array values map to correct indices
                 drefs.append({REST_KW.IDENT.value: dataref[0].ident, REST_KW.INDEX.value: ilist})
                 webapi_logger.info(f"INDICES {otext}: {dataref[0].ident} => {ilist}")
                 webapi_logger.info(f"INDICES aft: {dataref[0].ident} => {self._requested_indices_by_id[dataref[0].ident]}")
