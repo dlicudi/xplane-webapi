@@ -262,7 +262,7 @@ class XPWebsocketAPI(XPRestAPI):
             # before notifying higher layers that startup is complete.
             for attempt in range(3):
                 self.reload_caches(force=True)
-                if self.all_datarefs is not None and self.all_datarefs.count > 0:
+                if self.has_data:
                     break
                 if attempt < 2:
                     logger.warning("startup metadata warm-up incomplete, retrying..")
