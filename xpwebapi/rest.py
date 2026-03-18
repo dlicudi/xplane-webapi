@@ -85,6 +85,9 @@ class XPRestAPI(API):
         self._dataref_by_id = {}  # {dataref-id: Dataref}
 
         self.session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=50, pool_maxsize=100)
+        self.session.mount('http://', adapter)
+        self.session.mount('https://', adapter)
         # Install session here:
         # examples:
         # self.session.auth = ('user', 'password')

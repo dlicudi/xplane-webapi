@@ -48,6 +48,7 @@ class CALLBACK_TYPE(Enum):
     ON_CLOSE = "close"
     ON_REQUEST_FEEDBACK = "feedback"
     ON_DATAREF_UPDATE = "dataref_update"
+    ON_DATAREF_UPDATE_BATCH = "dataref_update_batch"
     ON_COMMAND_ACTIVE = "command_active"
     AFTER_START = "after_start"
     BEFORE_STOP = "before_stop"
@@ -741,6 +742,18 @@ class XPWebsocketAPI(XPRestAPI):
                             logger.warning(f"no data: {data}")
                             continue
 
+                        batch_updates = []
+                        raw_count = len(data[REST_KW.DATA.value])
+                        if raw_count > 3:
+                            raw_names = []
+                            for rid, _ in data[REST_KW.DATA.value].items():
+                                rid = int(rid)
+                                rd = self._dataref_by_id.get(rid)
+                                if rd is not None:
+                                    name = rd[0].meta.name if type(rd) is list else rd.path
+                                    raw_names.append(name.split("/")[-1])
+                            logger.debug(f"WS MSG: {raw_count} datarefs in one message: {raw_names}")
+
                         for ident, value in data[REST_KW.DATA.value].items():
                             ident = int(ident)
                             dataref = self._dataref_by_id.get(ident)
@@ -774,6 +787,7 @@ class XPWebsocketAPI(XPRestAPI):
                                     if self.changed(d1, v1):
                                         self.inc(d1)
                                         self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=d1, value=v1)
+                                        batch_updates.append((d1, v1))
                                     else:
                                         self.inc("-"+d1)
                                     # print(f"{d1}={v1}")
@@ -788,9 +802,13 @@ class XPWebsocketAPI(XPRestAPI):
                                 if self.changed(dataref.path, parsed_value):
                                     self.inc(dataref.path)
                                     self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=dataref.path, value=parsed_value)
+                                    batch_updates.append((dataref.path, parsed_value))
                                 else:
                                     self.inc("-"+dataref.path)
                                 # print(f"{dataref.name}={parsed_value}")
+
+                        if batch_updates:
+                            self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE_BATCH, updates=batch_updates)
                     #
                     #
                     else:
