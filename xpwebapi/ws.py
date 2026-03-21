@@ -475,43 +475,44 @@ class XPWebsocketAPI(XPRestAPI):
 
     def register_bulk_dataref_value_event(self, datarefs, on: bool = True) -> bool | int:
         drefs = []
-        for dataref in datarefs.values():
+        # Iterate (subscription_id, dataref) so subscribe/unsubscribe uses the same numeric id the
+        # server holds. After reload_caches(), Dataref.ident (from fresh meta) can differ from the
+        # id used when the subscription was created; dict keys must stay the subscription id.
+        for sub_id, dataref in datarefs.items():
             if type(dataref) is list:
-                meta = self.get_dataref_meta_by_id(dataref[0].ident)  # we modify the global source info, not the local copy in the Dataref()
-                
                 ilist = []
                 otext = "on "
-                
-                if dataref[0].ident not in self._requested_indices_by_id:
-                    self._requested_indices_by_id[dataref[0].ident] = []
-                    
+
+                if sub_id not in self._requested_indices_by_id:
+                    self._requested_indices_by_id[sub_id] = []
+
                 for d1 in dataref:
                     ilist.append(d1.index)
                     if on:
-                        if d1.index not in self._requested_indices_by_id[dataref[0].ident]:
-                            self._requested_indices_by_id[dataref[0].ident].append(d1.index)
-                            self._requested_indices_by_id[dataref[0].ident].sort()
+                        if d1.index not in self._requested_indices_by_id[sub_id]:
+                            self._requested_indices_by_id[sub_id].append(d1.index)
+                            self._requested_indices_by_id[sub_id].sort()
                     else:
                         otext = "off"
-                        if d1.index in self._requested_indices_by_id[dataref[0].ident]:
-                            self._requested_indices_by_id[dataref[0].ident].remove(d1.index)
+                        if d1.index in self._requested_indices_by_id[sub_id]:
+                            self._requested_indices_by_id[sub_id].remove(d1.index)
 
                 ilist.sort()  # must match _requested_indices_by_id order so compressed array values map to correct indices
-                drefs.append({REST_KW.IDENT.value: dataref[0].ident, REST_KW.INDEX.value: ilist})
-                webapi_logger.info(f"INDICES {otext}: {dataref[0].ident} => {ilist}")
-                webapi_logger.info(f"INDICES aft: {dataref[0].ident} => {self._requested_indices_by_id[dataref[0].ident]}")
+                drefs.append({REST_KW.IDENT.value: sub_id, REST_KW.INDEX.value: ilist})
+                webapi_logger.info(f"INDICES {otext}: {sub_id} => {ilist}")
+                webapi_logger.info(f"INDICES aft: {sub_id} => {self._requested_indices_by_id[sub_id]}")
             else:
                 if dataref.is_array:
                     logger.debug(f"dataref {dataref.name}: collecting whole array")
-                drefs.append({REST_KW.IDENT.value: dataref.ident})
+                drefs.append({REST_KW.IDENT.value: sub_id})
         if len(datarefs) > 0:
             mapping = {}
-            for d in datarefs.values():
+            for sub_id, d in datarefs.items():
                 if type(d) is list:
                     for d1 in d:
-                        mapping[d1.ident] = d1.name
+                        mapping[sub_id] = d1.name
                 else:
-                    mapping[d.ident] = d.name
+                    mapping[sub_id] = d.name
             action = "dataref_subscribe_values" if on else "dataref_unsubscribe_values"
             return self.send({REST_KW.TYPE.value: action, REST_KW.PARAMS.value: {REST_KW.DATAREFS.value: drefs}}, mapping)
         if on:
