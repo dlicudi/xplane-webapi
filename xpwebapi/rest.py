@@ -8,6 +8,7 @@ from enum import Enum
 
 import requests
 from natsort import natsorted
+from packaging.version import Version
 
 from .api import CONNECTION_STATUS, DATAREF_DATATYPE, API, Dataref, DatarefMeta, Command, CommandMeta, Cache, webapi_logger, DatarefValueType
 
@@ -176,7 +177,9 @@ class XPRestAPI(API):
         """Fetches API capabilties and caches it"""
         if len(self._capabilities) > 0:
             return self._capabilities
-        if self.connected:
+        # Use REST reachability, not XPWebsocketAPI.connected (websocket open), so we can read
+        # /api/capabilities and pick v2 vs v3 before opening the WebSocket.
+        if self.rest_api_reachable:
             try:
                 CAPABILITIES_API_URL = f"http://{self.host}:{self.port}/api/capabilities"  # independent from version
                 self.inc("get")
@@ -199,7 +202,7 @@ class XPRestAPI(API):
             except:
                 logger.error("capabilities", exc_info=True)
         else:
-            logger.error("no connection")
+            logger.debug("capabilities: REST API not reachable yet")
         return self._capabilities
 
     @property
@@ -234,8 +237,8 @@ class XPRestAPI(API):
                     logger.error("cannot determine api, api not set")
                     return
                 sorted_apis = natsorted(api_versions, reverse=True)
-                api = sorted_apis[0]  # takes the latest one, hoping it is the latest in time...
-                logger.info(f"selected api {api} ({sorted_apis})")
+                api_version = sorted_apis[0]  # takes the latest one, hoping it is the latest in time...
+                logger.info(f"selected api {api_version} ({sorted_apis})")
             if api_version in api_versions:
                 self.version = api_version
                 self._api_version = f"/{api_version}"
@@ -244,6 +247,36 @@ class XPRestAPI(API):
                 logger.warning(f"no api {api_version} in {api_versions}, api not set")
             return
         logger.warning(f"could not check api {api_version} in {capabilities}, api not set")
+
+    def sync_web_api_version_with_capabilities(self) -> None:
+        """Set REST/WebSocket API path to v3 on X-Plane 12.4+ when advertised.
+
+        On 12.4+, using /api/v2 for REST combined with the v2 WebSocket can yield
+        ``invalid_dataref_id`` on subscribe; v3 REST ids match the v3 WebSocket.
+        """
+        if not self.rest_api_reachable:
+            return
+        caps = self.capabilities
+        if len(caps) == 0:
+            return
+        api_versions = (caps.get("api") or {}).get("versions")
+        if not api_versions:
+            return
+        xp_str = self.xp_version
+        if xp_str is None:
+            return
+        try:
+            xp_base = Version(xp_str).base_version
+            if Version(xp_base) >= Version("12.4") and "v3" in api_versions and self.version == "v2":
+                logger.info(
+                    f"Web API v3 selected for X-Plane {xp_str} (v2 WebSocket rejected dataref subscriptions on this version)"
+                )
+                self.set_api_version("v3")
+            elif self.version == "v3" and "v3" not in api_versions:
+                logger.warning("simulator does not advertise v3; falling back to v2")
+                self.set_api_version("v2")
+        except Exception:
+            logger.debug("sync_web_api_version_with_capabilities: could not parse X-Plane version", exc_info=True)
 
     # Cache
     def reload_caches(self, force: bool = False, save: bool = False):
@@ -274,7 +307,7 @@ class XPRestAPI(API):
         if save:
             self.all_datarefs.save("webapi-datarefs.json")
         self.all_commands = Cache(self)
-        if self.version == "v2":  # >
+        if self.version in ("v2", "v3"):
             self.all_commands.load("/commands")
             if save:
                 self.all_commands.save("webapi-commands.json")
@@ -593,5 +626,6 @@ class XPRestAPI(API):
             if new_apiversion != "" and (new_apiversion != self._api_version or new_host != self.host or new_port != self.port):
                 self.set_network(host=new_host, port=new_port, api="/api", api_version=new_apiversion)
                 logger.info(f"XPlane API at {self.rest_url} from UDP beacon data{use_rest}")
+                self.sync_web_api_version_with_capabilities()
         else:
             logger.warning(f"could not get X-Plane version from beacon data {beacon_data}")

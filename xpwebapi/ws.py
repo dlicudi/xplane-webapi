@@ -196,7 +196,18 @@ class XPWebsocketAPI(XPRestAPI):
         """
         if connected:
             logger.debug("beacon detected")
+            version_before = self._api_version
             self.set_connection_from_beacon_data(beacon_data=beacon_data, same_host=same_host)
+            # If the beacon moved REST to a different API path (e.g. /v1 -> /v2) but we already opened a WebSocket,
+            # keep using the old URL until we reconnect; otherwise X-Plane rejects requests (invalid_version) and data stops.
+            if version_before != self._api_version and self.ws is not None:
+                logger.info(f"beacon: API path {version_before} -> {self._api_version}; reconnecting WebSocket")
+                self.stop()
+                self.disconnect_websocket(silent=True)
+                if self.rest_api_reachable:
+                    self.connect_websocket()
+                    if self.connected:
+                        self.start()
             self.slow_stop.set()
             if not self.websocket_listener_running:
                 logger.debug("starting..")
@@ -311,6 +322,8 @@ class XPWebsocketAPI(XPRestAPI):
                     if noconn % WARN_FREQ == 0:
                         logger.info("not connected, trying..")
                         noconn = noconn + 1
+                    if self.rest_api_reachable:
+                        self.sync_web_api_version_with_capabilities()
                     self.connect_websocket()
                     if self.connected:
                         self._already_warned = 0
