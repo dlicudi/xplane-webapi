@@ -623,9 +623,16 @@ class XPRestAPI(API):
             elif xp_version < XP_MIN_VERSION:
                 new_apiversion = ""
                 logger.warning(f"could not set API version from {xp_version} ({beacon_data})")
-            if new_apiversion != "" and (new_apiversion != self._api_version or new_host != self.host or new_port != self.port):
-                self.set_network(host=new_host, port=new_port, api="/api", api_version=new_apiversion)
-                logger.info(f"XPlane API at {self.rest_url} from UDP beacon data{use_rest}")
-                self.sync_web_api_version_with_capabilities()
+            if new_apiversion != "":
+                host_or_port_changed = new_host != self.host or new_port != self.port
+                # Only update network when host/port actually changed.
+                # sync_web_api_version_with_capabilities (called by connection_monitor at
+                # startup) may have already promoted v2→v3; re-applying the beacon's v2
+                # every tick causes a v3→v2→v3 bounce that momentarily points REST at
+                # the wrong endpoint and can corrupt dataref ID lookups.
+                if host_or_port_changed:
+                    self.set_network(host=new_host, port=new_port, api="/api", api_version=new_apiversion)
+                    logger.info(f"XPlane API at {self.rest_url} from UDP beacon data{use_rest}")
+                    self.sync_web_api_version_with_capabilities()
         else:
             logger.warning(f"could not get X-Plane version from beacon data {beacon_data}")
