@@ -93,14 +93,25 @@ class XPWebsocketAPI(XPRestAPI):
     RECEIVE_TIMEOUT = 5  # seconds, assumes no awser if no message recevied withing that timeout
     BEACON_TIMEOUT = 60  # seconds, if no beacon for 60 seconds, stops to release resources
 
+    @staticmethod
+    def _get_local_ip() -> str:
+        """Get local IP via UDP connect (no DNS lookup, works after sleep/wake/VPN changes)."""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("192.0.2.1", 80))  # RFC 5737 TEST-NET-1; no traffic sent
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "127.0.0.1"
+
     def __init__(self, host: str = "127.0.0.1", port: int = 8086, api: str = "api", api_version: str = "v2", use_rest: bool = False):
         # Open a UDP Socket to receive on Port 49000
         XPRestAPI.__init__(self, host=host, port=port, api=api, api_version=api_version, use_cache=True)
 
         self.use_rest = use_rest  # setter in API
 
-        hostname = socket.gethostname()
-        self.local_ip = socket.gethostbyname(hostname)
+        self.local_ip = self._get_local_ip()
 
         self.ws: Client | None = None  # None = no connection
         self.ws_lsnr_not_running = threading.Event()
