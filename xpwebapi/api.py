@@ -9,6 +9,8 @@ import math
 from abc import ABC, abstractmethod
 from enum import Enum, IntEnum
 from datetime import datetime
+import queue
+import threading
 from typing import List, Dict, Tuple, Any
 
 type DatarefValueType = bool | str | int | float
@@ -55,6 +57,35 @@ class CONNECTION_STATUS(IntEnum):
     UDP_LISTENER_RUNNING = 6
     LISTENING_FOR_DATA = 4
     RECEIVING_DATA = 5
+
+
+class MetaFetchQueue:
+    def __init__(self):
+        self.q = queue.Queue()
+        self.thread = threading.Thread(target=self.worker, name="MetaFetchWorker", daemon=True)
+        self.thread.start()
+
+    def worker(self):
+        while True:
+            obj = self.q.get()
+            if obj is None: break
+            try:
+                ret = obj.api.get_rest_meta(obj)
+                if ret is None:
+                    obj._meta_failed = True
+                else:
+                    obj._cached_meta = ret
+            except Exception:
+                obj._meta_failed = True
+            finally:
+                obj._meta_fetching = False
+            self.q.task_done()
+
+    def add(self, obj):
+        obj._meta_fetching = True
+        self.q.put(obj)
+
+meta_queue = MetaFetchQueue()
 
 
 class XPLANE_API_VERSIONS(Enum):
@@ -475,6 +506,8 @@ class Dataref:
 
     def __init__(self, path: str, api: API, auto_save: bool = False):
         self._cached_meta: DatarefMeta | None = None
+        self._meta_failed = False
+        self._meta_fetching = False
         self._monitored = 0
         self._encoding = None
         self._new_value = None
@@ -501,6 +534,10 @@ class Dataref:
     @property
     def meta(self) -> DatarefMeta | None:
         """Meta data of dataref"""
+        if self._cached_meta is not None:
+            return self._cached_meta
+        if self._meta_failed or self._meta_fetching:
+            return None
         if self.api.use_cache:
             if self.api.all_datarefs is not None:
                 r = self.api.all_datarefs.get(self.path)
@@ -512,7 +549,9 @@ class Dataref:
                 logger.error(f"dataref {self.path} has no api meta data in cache")
             else:
                 logger.error("no cache data")
-        return self.api.get_rest_meta(self)
+                
+        meta_queue.add(self)
+        return None
 
     @property
     def valid(self) -> bool:
@@ -611,8 +650,10 @@ class Dataref:
     def ident(self) -> int | None:
         """Get dataref identifier meta data"""
         if not self.valid:
-            logger.error(f"dataref {self.path} not valid")
-            self.add_error()
+            if not self._meta_fetching:
+                if self._err == 0:
+                    logger.error(f"dataref {self.path} not valid")
+                self.add_error()
             return None
         return self.meta.ident
 
@@ -628,8 +669,10 @@ class Dataref:
             - FLOATARRAY = "float_array"
             - DATA = "data" """
         if not self.valid:
-            logger.error(f"dataref {self.path} not valid")
-            self.add_error()
+            if not self._meta_fetching:
+                if self._err == 0:
+                    logger.error(f"dataref {self.path} not valid")
+                self.add_error()
             return None
         return self.meta.value_type
 
@@ -637,8 +680,10 @@ class Dataref:
     def is_writable(self) -> bool:
         """Whether dataref can be written back to X-Plane"""
         if not self.valid:
-            logger.error(f"dataref {self.path} not valid")
-            self.add_error()
+            if not self._meta_fetching:
+                if self._err == 0:
+                    logger.error(f"dataref {self.path} not valid")
+                self.add_error()
             return False
         return self.meta.is_writable
 
@@ -646,16 +691,20 @@ class Dataref:
     def is_array(self) -> bool:
         """Whether dataref is an array"""
         if not self.valid:
-            logger.error(f"dataref {self.path} not valid")
-            self.add_error()
+            if not self._meta_fetching:
+                if self._err == 0:
+                    logger.error(f"dataref {self.path} not valid")
+                self.add_error()
             return False
         return self.value_type in [DATAREF_DATATYPE.INTARRAY.value, DATAREF_DATATYPE.FLOATARRAY.value]
 
     @property
     def selected_indices(self) -> bool:
         if not self.valid:
-            logger.error(f"dataref {self.path} not valid")
-            self.add_error()
+            if not self._meta_fetching:
+                if self._err == 0:
+                    logger.error(f"dataref {self.path} not valid")
+                self.add_error()
             return False
         return len(self.meta.indices) > 0
 
@@ -703,7 +752,9 @@ class Dataref:
 
     def parse_raw_value(self, raw_value):
         if not self.valid:
-            logger.error(f"dataref {self.path} not valid")
+            if not self._meta_fetching:
+                if self._err == 0:
+                    logger.error(f"dataref {self.path} not valid")
             return None
 
         if self.value_type in [DATAREF_DATATYPE.INTARRAY.value, DATAREF_DATATYPE.FLOATARRAY.value]:
@@ -770,6 +821,8 @@ class Command:
 
     def __init__(self, api: API, path: str, duration: float = 0.0):
         self._cached_meta = None
+        self._meta_failed = False
+        self._meta_fetching = False
         self.api = api
         self.path = path  # some/command
         self.name = path  # some/command
@@ -783,6 +836,10 @@ class Command:
     @property
     def meta(self) -> CommandMeta | None:
         """Meta data of command"""
+        if self._cached_meta is not None:
+            return self._cached_meta
+        if self._meta_failed or self._meta_fetching:
+            return None
         if self.api.use_cache:
             if self.api.all_commands is not None:
                 r = self.api.all_commands.get(self.path)
@@ -792,7 +849,9 @@ class Command:
                 logger.error(f"command {self.path} has no api meta data in cache")
             else:
                 logger.error("no cache data")
-        return self.api.get_rest_meta(self)
+                
+        meta_queue.add(self)
+        return None
 
     @property
     def valid(self) -> bool:
@@ -803,8 +862,10 @@ class Command:
     def ident(self) -> int | None:
         """Get command identifier meta data"""
         if not self.valid:
-            logger.error(f"command {self.path} not valid")
-            self.add_error()
+            if not self._meta_fetching:
+                if self._err == 0:
+                    logger.error(f"command {self.path} not valid")
+                self.add_error()
             return None
         return self.meta.ident
 

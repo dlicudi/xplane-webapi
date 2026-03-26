@@ -409,7 +409,10 @@ class XPRestAPI(API):
             logger.warning("not connected")
             return False
         if not dataref.valid:
-            logger.error(f"dataref {dataref.path} not valid")
+            if not dataref._meta_fetching:
+                if dataref._err == 0:
+                    logger.error(f"dataref {dataref.path} not valid")
+                dataref.add_error()
             return False
         if not dataref.is_writable:
             logger.warning(f"dataref {dataref.path} is not writable")
@@ -451,7 +454,10 @@ class XPRestAPI(API):
             logger.warning("not connected")
             return False
         if not command.valid:
-            logger.error(f"command {command.path} is not valid")
+            if not command._meta_fetching:
+                if command._err == 0:
+                    logger.error(f"command {command.path} is not valid")
+                command.add_error()
             return False
         if duration == 0.0 and command.duration != 0.0:
             duration = command.duration
@@ -481,7 +487,10 @@ class XPRestAPI(API):
             logger.debug("not connected")
             return None
         if not dataref.valid:
-            logger.error(f"dataref {dataref.path} not valid")
+            if not dataref._meta_fetching:
+                if dataref._err == 0:
+                    logger.error(f"dataref {dataref.path} not valid")
+                dataref.add_error()
             return None
         url = f"{self.rest_url}/datarefs/{dataref.ident}/value"
         self.inc("get")
