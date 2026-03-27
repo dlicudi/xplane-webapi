@@ -261,6 +261,7 @@ class XPWebsocketAPI(XPRestAPI):
             if url is not None:
                 try:
                     if self.rest_api_reachable:
+                        logger.info(f"attempting websocket connect to {url}")
                         self.ws = Client.connect(url)
                         self.status = CONNECTION_STATUS.WEBSOCKET_CONNNECTED
                         logger.info(f"websocket opened at {url}")
@@ -272,8 +273,8 @@ class XPWebsocketAPI(XPRestAPI):
                         if self._unreach_count % 50 == 0:
                             logger.warning("rest api unreachable")
                         self._unreach_count = self._unreach_count + 1
-                except:
-                    logger.error("cannot connect", exc_info=True)
+                except Exception:
+                    logger.error(f"cannot connect websocket at {url}", exc_info=True)
             else:
                 logger.warning(f"web socket url is none {url}")
         else:
