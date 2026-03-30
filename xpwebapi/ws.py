@@ -801,24 +801,37 @@ class XPWebsocketAPI(XPRestAPI):
                                     continue
                                 meta = dataref[0].meta
                                 if meta is None:
-                                    logger.warning(f"dataref array {self.all_datarefs.equiv(ident=ident)} meta data not found")
-                                    continue
+                                    logger.debug(f"dataref array {self.all_datarefs.equiv(ident=ident)} meta data not found (yet), using path fallback")
+                                name = meta.name if meta is not None else dataref[0].path
                                 current_indices = self._requested_indices_by_id.get(ident, [])
-                                if len(value) != len(current_indices):
+                                if len(value) == len(current_indices):
+                                    # Regular case: One-to-one mapping
+                                    for idx, v1 in zip(current_indices, value):
+                                        d1 = f"{name}[{idx}]"
+                                        if self.changed(d1, v1):
+                                            self.inc(d1)
+                                            self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=d1, value=v1)
+                                            batch_updates.append((d1, v1))
+                                        else:
+                                            self.inc("-"+d1)
+                                elif len(value) > (max(current_indices) if current_indices else -1):
+                                    # Over-coverage case: X-Plane sent a full prefix array
+                                    for idx in current_indices:
+                                        v1 = value[idx]
+                                        d1 = f"{name}[{idx}]"
+                                        if self.changed(d1, v1):
+                                            self.inc(d1)
+                                            self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=d1, value=v1)
+                                            batch_updates.append((d1, v1))
+                                        else:
+                                            self.inc("-"+d1)
+                                else:
                                     logger.warning(
-                                        f"dataref array {self.all_datarefs.equiv(ident=ident)}: size mismatch ({len(value)} vs {len(current_indices)})"
+                                        f"dataref array {self.all_datarefs.equiv(ident=ident)}: size mismatch ({len(value)} vs {len(current_indices)}), and not a full prefix"
                                     )
                                     logger.warning(f"dataref array {self.all_datarefs.equiv(ident=ident)}: value: {value}, indices: {current_indices})")
                                     # Since we don't know the indices for this partial data array, we skip processing to avoid misrouting
                                     continue
-                                for idx, v1 in zip(current_indices, value):
-                                    d1 = f"{meta.name}[{idx}]"
-                                    if self.changed(d1, v1):
-                                        self.inc(d1)
-                                        self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=d1, value=v1)
-                                        batch_updates.append((d1, v1))
-                                    else:
-                                        self.inc("-"+d1)
                                     # print(f"{d1}={v1}")
                                 # alternative:
                                 # for d in dataref:
