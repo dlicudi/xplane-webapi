@@ -776,7 +776,10 @@ class XPWebsocketAPI(XPRestAPI):
                                 rid = int(rid)
                                 rd = self._dataref_by_id.get(rid)
                                 if rd is not None:
-                                    name = rd[0].meta.name if type(rd) is list else rd.path
+                                    if type(rd) is list:
+                                        name = rd[0].meta.name if rd[0].meta is not None else rd[0].path
+                                    else:
+                                        name = rd.path
                                     raw_names.append(name.split("/")[-1])
                             logger.debug(f"WS MSG: {raw_count} datarefs in one message: {raw_names}")
 
