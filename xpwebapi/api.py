@@ -438,8 +438,8 @@ class Cache:
 
     def load(self, path):
         """Load cache data"""
-        if not self.api.connected:
-            logger.warning("not connected")
+        if not self.api.rest_api_reachable:
+            logger.warning("rest api unreachable")
             return None
         self._what = path
         url = self.api.rest_url + path

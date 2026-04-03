@@ -243,10 +243,11 @@ class XPWebsocketAPI(XPRestAPI):
         """Whether client software is connect to Websoket"""
         res = self.ws is None
         if res and self._already_warned <= self.MAX_WARNING:
+            log = logger.debug
             if self._already_warned == self.MAX_WARNING:
-                logger.warning("no connection (last warning)")
+                log("no connection (last warning)")
             else:
-                logger.warning("no connection")
+                log("no connection")
             self._already_warned = self._already_warned + 1
         return not res
 

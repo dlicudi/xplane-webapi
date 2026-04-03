@@ -1,6 +1,7 @@
 """X-Plane Web API access through REST API"""
 
 import logging
+import threading
 import base64
 from datetime import timedelta
 from typing import List
@@ -291,6 +292,11 @@ class XPRestAPI(API):
             save (bool): Save raw meta data in JSON formatted files (default: `False`)
         """
         MINTIME_BETWEEN_RELOAD = 10  # seconds
+        if not self.rest_api_reachable:
+            logger.warning("rest api unreachable, cannot reload caches")
+            self.all_datarefs = None
+            self.all_commands = None
+            return
         if not force:
             if self._last_updated != 0:
                 currtime = self._running_time.value
@@ -301,27 +307,35 @@ class XPRestAPI(API):
                         logger.info(f"dataref cache not updated, updated {round(difftime, 1)} secs. ago")
                         return
                 else:
-                    logger.warning(f"no value for {RUNNING_TIME}")
-        self.all_datarefs = Cache(self)
-        self.all_datarefs.load("/datarefs")
-        if save:
-            self.all_datarefs.save("webapi-datarefs.json")
-        self.all_commands = Cache(self)
+                    log = logger.debug if threading.current_thread().name.startswith("XPlane::Startup") else logger.warning
+                    log(f"no value for {RUNNING_TIME}")
+        datarefs = Cache(self)
+        datarefs.load("/datarefs")
+        commands = Cache(self)
         if self.version in ("v2", "v3"):
-            self.all_commands.load("/commands")
-            if save:
+            commands.load("/commands")
+        self.all_datarefs = datarefs if datarefs.has_data else None
+        self.all_commands = commands if commands.has_data else None
+        if save:
+            if self.all_datarefs is not None:
+                self.all_datarefs.save("webapi-datarefs.json")
+            if self.all_commands is not None:
                 self.all_commands.save("webapi-commands.json")
         currtime = self._running_time.value
         if currtime is not None:
             self._last_updated = int(currtime)
         else:
-            logger.warning(f"no value for {RUNNING_TIME}")
-        if self.all_commands.has_data or self.all_datarefs.has_data:
+            log = logger.debug if threading.current_thread().name.startswith("XPlane::Startup") else logger.warning
+            log(f"no value for {RUNNING_TIME}")
+        if (self.all_commands is not None and self.all_commands.has_data) or (self.all_datarefs is not None and self.all_datarefs.has_data):
             self._use_cache = self._should_use_cache
             if self._use_cache:
                 logger.info("using caches")
+        dataref_count = self.all_datarefs.count if self.all_datarefs is not None else 0
+        command_count = self.all_commands.count if self.all_commands is not None else 0
+        uptime = self.uptime if self.uptime is not None else 0
         logger.info(
-            f"dataref cache ({self.all_datarefs.count}) and command cache ({self.all_commands.count}) reloaded, sim uptime {str(timedelta(seconds=int(self.uptime)))}"
+            f"dataref cache ({dataref_count}) and command cache ({command_count}) reloaded, sim uptime {str(timedelta(seconds=int(uptime)))}"
         )
 
     def invalidate_caches(self):
