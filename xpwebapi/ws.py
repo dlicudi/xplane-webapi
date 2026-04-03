@@ -32,6 +32,7 @@ XP_MAX_VERSION = 121499
 XP_MAX_VERSION_STR = "12.4.1"
 
 MAX_WARNING_COUNT = 5
+WS_STALL_TIMEOUT = 30  # seconds without websocket traffic before forcing reconnect
 
 
 # WEB API RETURN CODES
@@ -118,6 +119,7 @@ class XPWebsocketAPI(XPRestAPI):
         self.ws_lsnr_not_running.set()  # means it is off
         self.ws_thread = None
         self.startup_thread = None
+        self._last_ws_activity_monotonic = None
 
         self.req_number = 0
         self._requests = {}
@@ -264,15 +266,17 @@ class XPWebsocketAPI(XPRestAPI):
                     if self.rest_api_reachable:
                         logger.info(f"attempting websocket connect to {url}")
                         self.ws = Client.connect(url)
+                        self._last_ws_activity_monotonic = time.monotonic()
                         self.status = CONNECTION_STATUS.WEBSOCKET_CONNNECTED
                         logger.info(f"websocket opened at {url}")
                         self.execute_callbacks(CALLBACK_TYPE.ON_OPEN)
                     else:
-                        if self._unreach_count <= MAX_WARNING_COUNT:
-                            last_warning = " (last warning)" if self._unreach_count == MAX_WARNING_COUNT else ""
-                            logger.warning(f"rest api unreachable{last_warning}")
-                        if self._unreach_count % 50 == 0:
+                        if self._unreach_count == 0:
                             logger.warning("rest api unreachable")
+                        elif self._unreach_count == MAX_WARNING_COUNT:
+                            logger.warning("rest api unreachable (last warning)")
+                        elif self._unreach_count % 50 == 0:
+                            logger.debug("rest api unreachable")
                         self._unreach_count = self._unreach_count + 1
                 except Exception:
                     logger.error(f"cannot connect websocket at {url}", exc_info=True)
@@ -381,6 +385,20 @@ class XPWebsocketAPI(XPRestAPI):
                         logger.debug("..no connection. trying to connect..")
                     noconn_count = noconn_count + 1
             else:
+                # Connection is OK; detect stale sockets using websocket health rather than
+                # periodic REST probes. A sentinel dataref would be aircraft-specific, so
+                # rely on overall websocket traffic when we have active subscriptions.
+                if not self.websocket_listener_running:
+                    logger.warning("websocket listener not running; resetting websocket connection")
+                    self.disconnect_websocket(silent=True)
+                    continue
+                if len(self._dataref_by_id) > 0 and self._last_ws_activity_monotonic is not None:
+                    stalled_for = time.monotonic() - self._last_ws_activity_monotonic
+                    if stalled_for >= WS_STALL_TIMEOUT:
+                        logger.warning(f"websocket traffic stalled for {stalled_for:.1f}s; resetting websocket connection")
+                        self.disconnect_websocket(silent=True)
+                        self.invalidate_caches()
+                        continue
                 # Connection is OK, we wait before checking again
                 self.should_not_connect.wait(self.RECONNECT_TIMEOUT)  # could be n * RECONNECT_TIMEOUT
                 if mon_count % CONN_FREQ == 0:
@@ -710,6 +728,7 @@ class XPWebsocketAPI(XPRestAPI):
                     continue
 
                 self.inc("receive")
+                self._last_ws_activity_monotonic = time.monotonic()
                 lnow = now()
                 if total_reads == 0:
                     logger.info(f"..first message at {lnow.replace(microsecond=0)} ({round((lnow - start_time).seconds, 2)} secs.).. {'<'*attention}")

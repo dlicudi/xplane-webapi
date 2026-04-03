@@ -293,7 +293,9 @@ class XPRestAPI(API):
         """
         MINTIME_BETWEEN_RELOAD = 10  # seconds
         if not self.rest_api_reachable:
-            logger.warning("rest api unreachable, cannot reload caches")
+            thread_name = threading.current_thread().name
+            log = logger.debug if thread_name.startswith("XPlane::Startup") or thread_name.startswith("XPlane::LostConnection") else logger.warning
+            log("rest api unreachable, cannot reload caches")
             self.all_datarefs = None
             self.all_commands = None
             return
@@ -325,7 +327,8 @@ class XPRestAPI(API):
         if currtime is not None:
             self._last_updated = int(currtime)
         else:
-            log = logger.debug if threading.current_thread().name.startswith("XPlane::Startup") else logger.warning
+            thread_name = threading.current_thread().name
+            log = logger.debug if thread_name.startswith("XPlane::Startup") or thread_name.startswith("XPlane::LostConnection") else logger.warning
             log(f"no value for {RUNNING_TIME}")
         if (self.all_commands is not None and self.all_commands.has_data) or (self.all_datarefs is not None and self.all_datarefs.has_data):
             self._use_cache = self._should_use_cache
