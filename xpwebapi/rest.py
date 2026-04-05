@@ -345,6 +345,18 @@ class XPRestAPI(API):
         """Remove cache data"""
         self.all_datarefs = None
         self.all_commands = None
+        # Clear per-instance cached metas so datarefs re-resolve their IDs from the
+        # fresh shared cache on reconnect. X-Plane reassigns numeric IDs each session,
+        # so stale _cached_meta would cause 404 errors after a disconnect/reconnect.
+        for d in self._dataref_by_id.values():
+            if type(d) is Dataref:
+                d._cached_meta = None
+                d._meta_failed = False
+            elif type(d) is list:
+                for di in d:
+                    di._cached_meta = None
+                    di._meta_failed = False
+        self._dataref_by_id.clear()
         logger.info("cache invalidated")
 
     def rebuild_dataref_ids(self):
