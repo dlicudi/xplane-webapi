@@ -307,8 +307,9 @@ class XPWebsocketAPI(XPRestAPI):
     def disconnect_websocket(self, silent: bool = False):
         """Gracefully closes Websocket connection"""
         if self.ws is not None:
-            self.ws.close()
-            self.ws = None
+            ws = self.ws
+            self.ws = None  # null first so ws_listener's ConnectionClosed handler skips ON_CLOSE
+            ws.close()
             self.status = CONNECTION_STATUS.WEBSOCKET_DISCONNNECTED
             dummy = super().connected  # set REST API reachability status
             if not silent:
@@ -881,11 +882,13 @@ class XPWebsocketAPI(XPRestAPI):
 
             except ConnectionClosed:
                 logger.warning("websocket connection closed")
+                intentional = self.ws is None  # disconnect_websocket already nulled it
                 self.ws = None
                 self.ws_lsnr_not_running.set()
-                self.status = CONNECTION_STATUS.WEBSOCKET_DISCONNNECTED  # should check rest api reachable
-                dummy = super().connected
-                self.execute_callbacks(CALLBACK_TYPE.ON_CLOSE)
+                if not intentional:
+                    self.status = CONNECTION_STATUS.WEBSOCKET_DISCONNNECTED  # should check rest api reachable
+                    dummy = super().connected
+                    self.execute_callbacks(CALLBACK_TYPE.ON_CLOSE)
 
             except:
                 logger.error("ws_listener error", exc_info=True)
