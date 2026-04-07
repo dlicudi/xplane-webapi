@@ -120,6 +120,7 @@ class XPWebsocketAPI(XPRestAPI):
         self.ws_thread = None
         self.startup_thread = None
         self._last_ws_activity_monotonic = None
+        self._ws_stall_count = 0  # number of times websocket traffic stalled
 
         self.req_number = 0
         self._requests = {}
@@ -396,7 +397,16 @@ class XPWebsocketAPI(XPRestAPI):
                 if len(self._dataref_by_id) > 0 and self._last_ws_activity_monotonic is not None:
                     stalled_for = time.monotonic() - self._last_ws_activity_monotonic
                     if stalled_for >= WS_STALL_TIMEOUT:
-                        logger.warning(f"websocket traffic stalled for {stalled_for:.1f}s; resetting websocket connection")
+                        self._ws_stall_count += 1
+                        if self._ws_stall_count <= 3:
+                            logger.warning(
+                                f"websocket traffic stalled for {stalled_for:.1f}s (stall #{self._ws_stall_count}); "
+                                f"resetting websocket connection. "
+                                f"X-Plane is not pushing dataref updates despite active subscriptions. "
+                                f"This is a known X-Plane issue; reloading XPPython3 plugins may restore traffic."
+                            )
+                        elif self._ws_stall_count % 10 == 0:
+                            logger.warning(f"websocket traffic still stalled (stall #{self._ws_stall_count})")
                         self.disconnect_websocket(silent=True)
                         self.invalidate_caches()
                         continue
@@ -730,6 +740,9 @@ class XPWebsocketAPI(XPRestAPI):
 
                 self.inc("receive")
                 self._last_ws_activity_monotonic = time.monotonic()
+                if self._ws_stall_count > 0:
+                    logger.info(f"websocket traffic resumed after {self._ws_stall_count} stall(s)")
+                    self._ws_stall_count = 0
                 lnow = now()
                 if total_reads == 0:
                     logger.info(f"..first message at {lnow.replace(microsecond=0)} ({round((lnow - start_time).seconds, 2)} secs.).. {'<'*attention}")
