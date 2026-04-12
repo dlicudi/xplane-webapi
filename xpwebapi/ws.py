@@ -33,6 +33,7 @@ XP_MAX_VERSION_STR = "12.4.1"
 
 MAX_WARNING_COUNT = 5
 WS_STALL_TIMEOUT = 30  # seconds without websocket traffic before forcing reconnect
+KEEPALIVE_DATAREF_PATH = "sim/network/misc/network_time_sec"  # ticks unconditionally; keeps stall detector honest
 
 
 # WEB API RETURN CODES
@@ -121,6 +122,7 @@ class XPWebsocketAPI(XPRestAPI):
         self.startup_thread = None
         self._last_ws_activity_monotonic = None
         self._ws_stall_count = 0  # number of times websocket traffic stalled
+        self._keepalive_ident: int | None = None
 
         self.req_number = 0
         self._requests = {}
@@ -286,6 +288,25 @@ class XPWebsocketAPI(XPRestAPI):
         else:
             logger.warning("already connected")
 
+    def _subscribe_keepalive(self):
+        """Subscribe to a universal heartbeat dataref so the stall detector has reliable traffic.
+
+        sim/network/misc/network_time_sec ticks unconditionally while X-Plane is running, so
+        _last_ws_activity_monotonic stays fresh regardless of whether subscribed datarefs change.
+        The keepalive ident is intentionally NOT added to _dataref_by_id, so its updates never
+        reach user callbacks — they only bump the activity timestamp.
+        """
+        meta = self.get_dataref_meta_by_name(KEEPALIVE_DATAREF_PATH)
+        if meta is None:
+            logger.debug(f"keepalive dataref {KEEPALIVE_DATAREF_PATH} not in database; stall detection may produce false positives")
+            return
+        self._keepalive_ident = meta.ident
+        self.send(
+            {REST_KW.TYPE.value: "dataref_subscribe_values", REST_KW.PARAMS.value: {REST_KW.DATAREFS.value: [{REST_KW.IDENT.value: meta.ident}]}},
+            {meta.ident: KEEPALIVE_DATAREF_PATH},
+        )
+        logger.debug(f"keepalive subscribed: {KEEPALIVE_DATAREF_PATH} (ident={meta.ident})")
+
     def _complete_startup(self):
         try:
             # When restarted after network failure, clean and rebuild cached metadata
@@ -298,6 +319,7 @@ class XPWebsocketAPI(XPRestAPI):
                     logger.warning("startup metadata warm-up incomplete, retrying..")
                     time.sleep(0.5)
             self.rebuild_dataref_ids()
+            self._subscribe_keepalive()
             self.execute_callbacks(CALLBACK_TYPE.AFTER_START, connected=self.connected)
             logger.info(f"{type(self).__name__} started")
         except:
@@ -307,6 +329,7 @@ class XPWebsocketAPI(XPRestAPI):
 
     def disconnect_websocket(self, silent: bool = False):
         """Gracefully closes Websocket connection"""
+        self._keepalive_ident = None
         if self.ws is not None:
             ws = self.ws
             self.ws = None  # null first so ws_listener's ConnectionClosed handler skips ON_CLOSE
@@ -821,9 +844,10 @@ class XPWebsocketAPI(XPRestAPI):
                             ident = int(ident)
                             dataref = self._dataref_by_id.get(ident)
                             if dataref is None:
-                                logger.debug(
-                                    f"no dataref for id={self.all_datarefs.equiv(ident=int(ident))} (this may be a previously requested dataref arriving late..., safely ignore)"
-                                )
+                                if ident != self._keepalive_ident:
+                                    logger.debug(
+                                        f"no dataref for id={self.all_datarefs.equiv(ident=int(ident))} (this may be a previously requested dataref arriving late..., safely ignore)"
+                                    )
                                 continue
 
                             self.inc("update_dataref")
