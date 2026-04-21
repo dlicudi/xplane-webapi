@@ -11,7 +11,7 @@ import requests
 from natsort import natsorted
 from packaging.version import Version
 
-from .api import CONNECTION_STATUS, DATAREF_DATATYPE, API, Dataref, DatarefMeta, Command, CommandMeta, Cache, webapi_logger, DatarefValueType
+from .api import CONNECTION_STATUS, DATAREF_DATATYPE, API, Dataref, DatarefMeta, Command, CommandMeta, Cache, webapi_logger, DatarefValueType, meta_queue
 
 # local logging
 logger = logging.getLogger(__name__)
@@ -408,7 +408,12 @@ class XPRestAPI(API):
                 m0 = metadata[0]
                 obj._cached_meta = Cache.meta(**m0)
                 return obj._cached_meta
-        logger.error(f"{obj_type} {obj.path} could not get meta data through REST API")
+        # The caller (MetaFetchQueue worker) may retry before giving up, so log
+        # transient attempts at debug level; only the final attempt logs ERROR.
+        retries = getattr(obj, "_meta_retries", 0)
+        max_retries = getattr(meta_queue, "MAX_RETRIES", 0)
+        log = logger.error if retries >= max_retries else logger.debug
+        log(f"{obj_type} {obj.path} could not get meta data through REST API")
         return None
 
     def get_dataref_meta_by_name(self, path: str) -> DatarefMeta | None:

@@ -60,6 +60,13 @@ class CONNECTION_STATUS(IntEnum):
 
 
 class MetaFetchQueue:
+    # Datarefs referenced before the aircraft finishes loading are not yet
+    # registered in X-Plane's /datarefs index; the filtered GET returns 200
+    # with an empty data[] and the fetch "fails". Retry a few times with a
+    # delay so the meta can resolve once the plane is fully loaded.
+    MAX_RETRIES = 3
+    RETRY_DELAY = 2.0  # seconds
+
     def __init__(self):
         self.q = queue.Queue()
         self.thread = threading.Thread(target=self.worker, name="MetaFetchWorker", daemon=True)
@@ -71,18 +78,27 @@ class MetaFetchQueue:
             if obj is None: break
             try:
                 ret = obj.api.get_rest_meta(obj)
-                if ret is None:
-                    obj._meta_failed = True
-                else:
-                    obj._cached_meta = ret
             except Exception:
-                obj._meta_failed = True
-            finally:
+                ret = None
+            if ret is not None:
+                obj._cached_meta = ret
                 obj._meta_fetching = False
+                obj._meta_retries = 0
+            else:
+                retries = getattr(obj, "_meta_retries", 0)
+                if retries < self.MAX_RETRIES:
+                    obj._meta_retries = retries + 1
+                    # Keep _meta_fetching True so the `meta` property does not
+                    # re-enqueue while we wait for the delayed retry.
+                    threading.Timer(self.RETRY_DELAY, self.q.put, args=(obj,)).start()
+                else:
+                    obj._meta_failed = True
+                    obj._meta_fetching = False
             self.q.task_done()
 
     def add(self, obj):
         obj._meta_fetching = True
+        obj._meta_retries = 0
         self.q.put(obj)
 
 meta_queue = MetaFetchQueue()
